@@ -3,7 +3,7 @@
 const CLAUDE_MODEL = 'claude-haiku-5-5';
 const MAX_IMAGE_SIDE = 1568;
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const READER_SIZE_MB = 275;
 
 const COUNTRIES = {
   GB: 'United Kingdom', US: 'United States', IE: 'Ireland', CA: 'Canada', AU: 'Australia',
@@ -167,14 +167,14 @@ async function identify(canvas) {
       return await runSearch(query, sure);
     }
 
-    setStatus('Reading the text on the cover…');
-    const text = await readCoverText(canvas);
-    if (!text) {
+    setStatus('Getting the text reader ready…');
+    const lines = await readCoverText(canvas);
+    if (!lines.length) {
       setStatus('Could not read any text on that cover. Add a Claude API key in Settings to recognise covers, or type it below.', true);
       els.settings.open = true;
       return;
     }
-    await runSearch(text, 'Read from the cover', true);
+    await runSearch(lines.map((l) => l.text).join(' '), 'Read from the cover', lines);
   } catch (err) {
     setStatus(err.message || 'Something went wrong.', true);
   } finally {
@@ -266,55 +266,34 @@ async function askClaude(base64, key) {
   try { return JSON.parse(match[0]); } catch { return {}; }
 }
 
-// Greyscale, contrast-stretched copy at a fixed width: finds text the colour photo hides.
-function highContrast(canvas) {
-  const out = document.createElement('canvas');
-  out.width = 1600;
-  out.height = Math.round(canvas.height * (1600 / canvas.width));
-  const ctx = out.getContext('2d');
-  ctx.drawImage(canvas, 0, 0, out.width, out.height);
-  const image = ctx.getImageData(0, 0, out.width, out.height);
-  const px = image.data;
-  let min = 255;
-  let max = 0;
-  for (let i = 0; i < px.length; i += 4) {
-    const g = (px[i] * 77 + px[i + 1] * 150 + px[i + 2] * 29) >> 8;
-    px[i] = g;
-    if (g < min) min = g;
-    if (g > max) max = g;
-  }
-  const range = Math.max(1, max - min);
-  for (let i = 0; i < px.length; i += 4) {
-    px[i] = px[i + 1] = px[i + 2] = ((px[i] - min) * 255) / range;
-  }
-  ctx.putImageData(image, 0, 0);
-  return out;
-}
-
-// Returns only the words the reader is confident about, so noise is never searched.
-async function readCoverText(canvas) {
-  let worker;
-  try {
-    await loadScript(TESSERACT_URL);
-    worker = await Tesseract.createWorker('eng');
-    await worker.setParameters({ tessedit_pageseg_mode: '11' });
-  } catch {
-    throw new Error('Could not load the text reader. Type the album below instead.');
-  }
-  const words = [];
-  try {
-    for (const image of [canvas, highContrast(canvas)]) {
-      const { data } = await worker.recognize(image);
-      for (const w of data.words || []) {
-        const text = w.text.replace(/[^\p{L}\p{N}'&-]/gu, '');
-        const known = words.some((x) => x.toLowerCase() === text.toLowerCase());
-        if (w.confidence > 60 && /\p{L}{2,}/u.test(text) && !known) words.push(text);
-      }
+// Reads the cover with a small vision model in a worker. Resolves to lines of text, each with
+// the height of its box. The model is downloaded once and then kept by the browser.
+let reader;
+let readId = 0;
+function readCoverText(canvas) {
+  return new Promise((resolve, reject) => {
+    const fail = () => reject(new Error('The on-device text reader could not run here. Type the album below, or add a Claude API key in Settings.'));
+    const id = ++readId;
+    try {
+      reader ||= new Worker('ocr-worker.js', { type: 'module' });
+    } catch {
+      return fail();
     }
-  } finally {
-    worker.terminate();
-  }
-  return words.slice(0, 6).join(' ');
+    reader.onerror = () => { reader = null; fail(); };
+    reader.onmessage = ({ data }) => {
+      if (data.type === 'progress') {
+        const mb = Math.min(READER_SIZE_MB, Math.round(data.loaded / 1e6));
+        setStatus(`Downloading the text reader (one time): ${mb} of ${READER_SIZE_MB} MB…`);
+      } else if (data.type === 'reading') {
+        setStatus('Reading the text on the cover…');
+      } else if (data.id === id && data.type === 'done') {
+        resolve(data.lines.filter((l) => /\p{L}{2,}|\p{N}{2,}/u.test(l.text)).slice(0, 6));
+      } else if (data.id === id) {
+        fail();
+      }
+    };
+    canvas.toBlob((blob) => reader.postMessage({ id, blob }), 'image/jpeg', 0.9);
+  });
 }
 
 /* ---------- search and results ---------- */
@@ -337,20 +316,22 @@ async function searchAlbums(query) {
   }
 }
 
-// `rough` marks text read off a cover: trailing words are often stray, so drop them until something matches.
-async function runSearch(query, source, rough = false) {
+// `lines` is text read off a cover. Small print (stickers, catalogue numbers) is rarely the
+// artist or title, so while nothing matches, drop the smallest line and search again.
+async function runSearch(query, source, lines = null) {
   const run = ++searchRun;
   els.query.value = query;
   setStatus(`${source ? source + ': ' : ''}searching for “${query}”…`);
 
   let albums = await searchAlbums(query);
-  if (rough) {
-    const words = query.split(' ');
-    while (!albums.length && words.length > 2 && run === searchRun) {
-      words.pop();
-      albums = await searchAlbums(words.join(' '));
+  if (lines) {
+    const left = [...lines];
+    while (!albums.length && left.length > 1 && run === searchRun) {
+      left.splice(left.indexOf(left.reduce((a, b) => (b.height < a.height ? b : a))), 1);
+      const shorter = left.map((l) => l.text).join(' ');
+      albums = await searchAlbums(shorter);
       if (albums.length) {
-        query = words.join(' ');
+        query = shorter;
         els.query.value = query;
       }
     }
@@ -359,7 +340,7 @@ async function runSearch(query, source, rough = false) {
 
   els.results.replaceChildren();
   if (!albums.length) {
-    setStatus(rough
+    setStatus(lines
       ? `Read “${query}” off the cover but found no match. Fix the text below, or add a Claude API key in Settings to recognise covers.`
       : `No match for “${query}”. Edit the text and search again, or open a search:`, true);
     const links = document.createElement('div');
@@ -373,11 +354,7 @@ async function runSearch(query, source, rough = false) {
   }
 
   setStatus(`${source ? source + ': ' : ''}“${query}”. Not right? Edit the text and search again.`);
-  albums.forEach((album, i) => {
-    const card = albumCard(album);
-    els.results.append(card.el);
-    if (i < 2) resolveSpotify(album.collectionViewUrl, card.spotify);
-  });
+  els.results.append(...albums.map(albumCard));
 }
 
 function link(text, href, cls) {
@@ -415,18 +392,7 @@ function albumCard(album) {
 
   body.append(title, meta, links);
   el.append(img, body);
-  return { el, spotify };
-}
-
-// Upgrade the Spotify search link to the exact album when the matching service knows it.
-async function resolveSpotify(appleUrl, anchor) {
-  try {
-    const res = await fetch('https://api.song.link/v1-alpha.1/links'
-      + `?userCountry=${country()}&url=${encodeURIComponent(appleUrl)}`);
-    if (!res.ok) return;
-    const url = (await res.json()).linksByPlatform?.spotify?.url;
-    if (url) anchor.href = url;
-  } catch { /* keep the search link */ }
+  return el;
 }
 
 /* ---------- settings ---------- */

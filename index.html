@@ -34,8 +34,9 @@
       </div>
 
       <p id="keyHint" class="key-hint" hidden>
-        Cover recognition is off, so only barcodes and plain printed text will work.
-        <button type="button" class="linkish">Add a Claude API key</button>
+        The app reads the name printed on the cover, on your device. The first photo downloads a 275 MB reader, once.
+        For covers with no text,
+        <button type="button" class="linkish">add a Claude API key</button>.
       </p>
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
@@ -63,7 +64,7 @@
         <p class="muted" id="keyState"></p>
         <p class="muted">
           With a key, your photo is sent to Anthropic's Claude to recognise the cover, even with no text on it.
-          Without one, the app scans barcodes and reads cover text on your device.
+          Without one, the app scans barcodes and reads the text on the cover with a small model that runs on your device (a one-time 275 MB download).
           The key is stored only in this browser and sent only to Anthropic.
           Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.
         </p>

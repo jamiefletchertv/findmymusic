@@ -8,9 +8,9 @@ A static site with no build step, served by GitHub Pages.
 
 1. **Barcode**: read on the device and looked up in MusicBrainz.
 2. **Cover recognition** (optional): if you save a Claude API key in Settings, the photo is sent to Anthropic's Claude, which recognises the cover even with no text on it. The key stays in your browser's local storage.
-3. **Cover text**: with no key, the text on the cover is read on the device (Tesseract.js) and used as a search.
+3. **Cover text**: with no key, a small vision model (Florence-2, run in the browser with Transformers.js) reads the text on the cover and that is used as a search. The model is a one-time download of about 275 MB.
 
-The match is then searched in Apple's catalogue, and the exact Spotify album link is found through Odesli (song.link). If that lookup fails, the Spotify button opens a Spotify search instead. You can always edit the text and search again.
+The match is then searched in Apple's catalogue. The Apple Music button opens the album itself; the Spotify button opens a Spotify album search for it, because Spotify's catalogue cannot be queried from a static site. You can always edit the text and search again.
 
 ## Hosting
 
