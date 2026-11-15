@@ -275,7 +275,7 @@ function readCoverText(canvas) {
     const fail = () => reject(new Error('The on-device text reader could not run here. Type the album below, or add a Claude API key in Settings.'));
     const id = ++readId;
     try {
-      reader ||= new Worker('ocr-worker.js', { type: 'module' });
+      reader ||= new Worker('ocr-worker.js?v=4', { type: 'module' });
     } catch {
       return fail();
     }
@@ -338,23 +338,32 @@ async function runSearch(query, source, lines = null) {
   }
   if (run !== searchRun) return;
 
-  els.results.replaceChildren();
+  // Always offer a direct search for what was read or typed: Apple's catalogue has gaps,
+  // and a search on the service itself usually puts the album first.
+  const direct = document.createElement('div');
+  direct.className = 'direct';
+  const label = document.createElement('p');
+  label.textContent = `Search for “${query}” on:`;
+  const links = document.createElement('div');
+  links.className = 'links';
+  links.append(
+    link('Spotify', spotifySearchUrl(query), 'spotify'),
+    link('Apple Music', appleSearchUrl(query), 'apple'),
+  );
+  direct.append(label, links);
+  els.results.replaceChildren(direct);
+
   if (!albums.length) {
     setStatus(lines
-      ? `Read “${query}” off the cover but found no match. Fix the text below, or add a Claude API key in Settings to recognise covers.`
-      : `No match for “${query}”. Edit the text and search again, or open a search:`, true);
-    const links = document.createElement('div');
-    links.className = 'links';
-    links.append(
-      link('Search Spotify', spotifySearchUrl(query), 'spotify'),
-      link('Search Apple Music', appleSearchUrl(query), 'apple'),
-    );
-    els.results.append(links);
+      ? `Read “${query}” off the cover but found no album match. Fix the text below, or use the search buttons.`
+      : `No album match for “${query}”. Edit the text and search again, or use the search buttons.`, true);
     return;
   }
 
   setStatus(`${source ? source + ': ' : ''}“${query}”. Not right? Edit the text and search again.`);
-  els.results.append(...albums.map(albumCard));
+  const heading = document.createElement('h2');
+  heading.textContent = 'Albums found';
+  els.results.append(heading, ...albums.map(albumCard));
 }
 
 function link(text, href, cls) {
