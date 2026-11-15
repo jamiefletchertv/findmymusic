@@ -18,6 +18,8 @@ const els = {
   status: $('status'), form: $('searchForm'), query: $('query'), results: $('results'),
   apiKey: $('apiKey'), saveKey: $('saveKey'), keyState: $('keyState'), country: $('country'),
   settings: $('settings'), keyHint: $('keyHint'),
+  spotifyId: $('spotifyId'), spotifyConnect: $('spotifyConnect'), spotifyDisconnect: $('spotifyDisconnect'),
+  spotifyState: $('spotifyState'), redirectUri: $('redirectUri'),
 };
 
 const store = {
@@ -275,7 +277,7 @@ function readCoverText(canvas) {
     const fail = () => reject(new Error('The on-device text reader could not run here. Type the album below, or add a Claude API key in Settings.'));
     const id = ++readId;
     try {
-      reader ||= new Worker('ocr-worker.js?v=4', { type: 'module' });
+      reader ||= new Worker('ocr-worker.js?v=5', { type: 'module' });
     } catch {
       return fail();
     }
@@ -306,14 +308,40 @@ function appleSearchUrl(query) {
   return `https://music.apple.com/${country().toLowerCase()}/search?term=${encodeURIComponent(query)}`;
 }
 
-async function searchAlbums(query) {
+async function searchApple(query) {
   try {
     const url = 'https://itunes.apple.com/search?media=music&entity=album&limit=6'
       + `&country=${country()}&term=${encodeURIComponent(query)}`;
-    return (await jsonp(url)).results || [];
+    return ((await jsonp(url)).results || []).map((a) => ({
+      title: a.collectionName,
+      artist: a.artistName,
+      year: (a.releaseDate || '').slice(0, 4),
+      image: (a.artworkUrl100 || '').replace('100x100', '300x300'),
+      appleUrl: a.collectionViewUrl,
+    }));
   } catch {
-    return []; // shown as "no match", with search links
+    return [];
   }
+}
+
+// Loose comparison key: lower case, no bracketed or "- EP" suffixes, letters and digits only.
+function key(text) {
+  return text.toLowerCase().replace(/\s*[([].*?[)\]]/g, '').replace(/^the\s+/, '').replace(/\s*-\s*(ep|single)$/, '').replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function sameAlbum(a, b) {
+  return key(a.title) === key(b.title) && key(a.artist) === key(b.artist);
+}
+
+// With Spotify connected its results lead, each with an exact link, and Apple's matches are
+// folded in. Otherwise the list is Apple's alone.
+async function searchAlbums(query) {
+  const [apple, spotify] = await Promise.all([searchApple(query), searchSpotify(query)]);
+  const albums = spotify.map((s) => ({ ...s, appleUrl: apple.find((a) => sameAlbum(a, s))?.appleUrl }));
+  for (const a of apple) {
+    if (!spotify.some((s) => sameAlbum(a, s))) albums.push(a);
+  }
+  return albums.slice(0, 8);
 }
 
 // `lines` is text read off a cover. Small print (stickers, catalogue numbers) is rarely the
@@ -338,7 +366,7 @@ async function runSearch(query, source, lines = null) {
   }
   if (run !== searchRun) return;
 
-  // Always offer a direct search for what was read or typed: Apple's catalogue has gaps,
+  // Always offer a direct search for what was read or typed: the catalogues have gaps,
   // and a search on the service itself usually puts the album first.
   const direct = document.createElement('div');
   direct.className = 'direct';
@@ -381,27 +409,155 @@ function albumCard(album) {
   el.className = 'album';
 
   const img = document.createElement('img');
-  img.src = (album.artworkUrl100 || '').replace('100x100', '300x300');
+  img.src = album.image;
   img.alt = '';
   img.loading = 'lazy';
 
   const body = document.createElement('div');
   const title = document.createElement('h3');
-  title.textContent = album.collectionName;
+  title.textContent = album.title;
   const meta = document.createElement('p');
-  const year = (album.releaseDate || '').slice(0, 4);
-  meta.textContent = [album.artistName, year].filter(Boolean).join(' · ');
+  meta.textContent = [album.artist, album.year].filter(Boolean).join(' · ');
 
-  const name = `${album.artistName} ${album.collectionName}`.replace(/\s*[([].*?[)\]]/g, '');
-  const spotify = link('Spotify', spotifySearchUrl(name), 'spotify');
-  const apple = link('Apple Music', album.collectionViewUrl, 'apple');
+  // An exact album link where one is known, otherwise a search on that service.
+  const name = `${album.artist} ${album.title}`.replace(/\s*[([].*?[)\]]/g, '');
   const links = document.createElement('div');
   links.className = 'links';
-  links.append(spotify, apple);
+  links.append(
+    album.spotifyUrl
+      ? link('Open in Spotify', album.spotifyUrl, 'spotify')
+      : link('Search Spotify', spotifySearchUrl(name), 'spotify'),
+    album.appleUrl
+      ? link('Open in Apple Music', album.appleUrl, 'apple')
+      : link('Search Apple Music', appleSearchUrl(name), 'apple'),
+  );
 
   body.append(title, meta, links);
   el.append(img, body);
   return el;
+}
+
+/* ---------- Spotify (optional sign-in, for exact album links) ---------- */
+
+const SPOTIFY_ACCOUNTS = 'https://accounts.spotify.com';
+
+function redirectUri() {
+  return location.origin + location.pathname;
+}
+
+function base64Url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function spotifyConnect() {
+  const clientId = els.spotifyId.value.trim() || store.get('spotifyClientId');
+  if (!clientId) {
+    els.spotifyState.textContent = 'Paste your Spotify client ID first.';
+    return;
+  }
+  store.set('spotifyClientId', clientId);
+  const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
+  const state = base64Url(crypto.getRandomValues(new Uint8Array(12)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  store.set('spotifyVerifier', verifier);
+  store.set('spotifyState', state);
+  location.assign(`${SPOTIFY_ACCOUNTS}/authorize?` + new URLSearchParams({
+    client_id: clientId,
+    response_type: 'code',
+    redirect_uri: redirectUri(),
+    code_challenge_method: 'S256',
+    code_challenge: base64Url(new Uint8Array(digest)),
+    state,
+  }));
+}
+
+async function spotifyTokenRequest(fields) {
+  const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: store.get('spotifyClientId'), ...fields }),
+  });
+  if (!res.ok) throw new Error('Spotify sign-in failed');
+  const body = await res.json();
+  const previous = JSON.parse(store.get('spotifyToken') || '{}');
+  store.set('spotifyToken', JSON.stringify({
+    access: body.access_token,
+    refresh: body.refresh_token || previous.refresh,
+    expires: Date.now() + body.expires_in * 1000,
+  }));
+  return body.access_token;
+}
+
+// Runs on page load: completes the sign-in when Spotify has sent the browser back here.
+async function spotifyFinishLogin() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('code') && !params.has('error')) return;
+  history.replaceState(null, '', redirectUri());
+  const verifier = store.get('spotifyVerifier');
+  const stateOk = params.get('state') === store.get('spotifyState');
+  store.set('spotifyVerifier', '');
+  store.set('spotifyState', '');
+  try {
+    if (!params.has('code') || !stateOk || !verifier) throw new Error('cancelled');
+    await spotifyTokenRequest({
+      grant_type: 'authorization_code',
+      code: params.get('code'),
+      redirect_uri: redirectUri(),
+      code_verifier: verifier,
+    });
+    setStatus('Spotify connected. Results now link straight to the album.');
+  } catch {
+    setStatus('Spotify sign-in did not complete. Check the client ID and redirect address in Settings.', true);
+    els.settings.open = true;
+  }
+}
+
+async function spotifyAccessToken() {
+  const token = JSON.parse(store.get('spotifyToken') || 'null');
+  if (!token) return null;
+  if (Date.now() < token.expires - 60000) return token.access;
+  try {
+    return await spotifyTokenRequest({ grant_type: 'refresh_token', refresh_token: token.refresh });
+  } catch {
+    store.set('spotifyToken', '');
+    showSpotifyState();
+    return null;
+  }
+}
+
+async function searchSpotify(query) {
+  try {
+    const token = await spotifyAccessToken();
+    if (!token) return [];
+    const res = await fetch('https://api.spotify.com/v1/search?' + new URLSearchParams({
+      q: query, type: 'album', limit: 5, market: country(),
+    }), { headers: { authorization: `Bearer ${token}` } });
+    if (res.status === 401) {
+      store.set('spotifyToken', '');
+      showSpotifyState();
+    }
+    if (!res.ok) return [];
+    return ((await res.json()).albums?.items || []).filter(Boolean).map((a) => ({
+      title: a.name,
+      artist: (a.artists || []).map((x) => x.name).join(', '),
+      year: (a.release_date || '').slice(0, 4),
+      image: a.images?.[1]?.url || a.images?.[0]?.url || '',
+      spotifyUrl: a.external_urls?.spotify,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function showSpotifyState() {
+  const connected = Boolean(store.get('spotifyToken'));
+  els.spotifyId.value = store.get('spotifyClientId');
+  els.spotifyState.textContent = connected
+    ? 'Connected. Results link straight to the album on Spotify.'
+    : 'Not connected. Spotify buttons open a Spotify search.';
+  els.spotifyConnect.textContent = connected ? 'Reconnect' : 'Connect';
+  els.spotifyDisconnect.hidden = !connected;
+  els.redirectUri.textContent = redirectUri();
 }
 
 /* ---------- settings ---------- */
@@ -445,5 +601,11 @@ els.keyHint.querySelector('button').addEventListener('click', () => {
   els.settings.open = true;
   els.apiKey.focus();
 });
+els.spotifyConnect.addEventListener('click', spotifyConnect);
+els.spotifyDisconnect.addEventListener('click', () => {
+  store.set('spotifyToken', '');
+  showSpotifyState();
+});
 initCountry();
 showKeyState();
+spotifyFinishLogin().then(showSpotifyState);

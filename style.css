@@ -189,3 +189,5 @@ a { color: var(--accent); }
 
 .direct p { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
 .version { text-align: center; margin-top: 16px; }
+
+code { overflow-wrap: anywhere; color: var(--text); }
