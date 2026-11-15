@@ -167,3 +167,22 @@ p.muted { margin: 8px 0 0; }
 a { color: var(--accent); }
 
 [hidden] { display: none !important; }
+
+.key-hint {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.linkish {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+}

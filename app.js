@@ -17,7 +17,7 @@ const els = {
   cameraBtn: $('cameraBtn'), shutterBtn: $('shutterBtn'), fileInput: $('fileInput'),
   status: $('status'), form: $('searchForm'), query: $('query'), results: $('results'),
   apiKey: $('apiKey'), saveKey: $('saveKey'), keyState: $('keyState'), country: $('country'),
-  settings: $('settings'),
+  settings: $('settings'), keyHint: $('keyHint'),
 };
 
 const store = {
@@ -170,11 +170,11 @@ async function identify(canvas) {
     setStatus('Reading the text on the cover…');
     const text = await readCoverText(canvas);
     if (!text) {
-      setStatus('No barcode or readable text found. Type it below, or add a Claude API key in Settings to recognise covers.', true);
+      setStatus('Could not read any text on that cover. Add a Claude API key in Settings to recognise covers, or type it below.', true);
       els.settings.open = true;
       return;
     }
-    await runSearch(text, 'Read from the cover');
+    await runSearch(text, 'Read from the cover', true);
   } catch (err) {
     setStatus(err.message || 'Something went wrong.', true);
   } finally {
@@ -266,18 +266,55 @@ async function askClaude(base64, key) {
   try { return JSON.parse(match[0]); } catch { return {}; }
 }
 
+// Greyscale, contrast-stretched copy at a fixed width: finds text the colour photo hides.
+function highContrast(canvas) {
+  const out = document.createElement('canvas');
+  out.width = 1600;
+  out.height = Math.round(canvas.height * (1600 / canvas.width));
+  const ctx = out.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
+  const image = ctx.getImageData(0, 0, out.width, out.height);
+  const px = image.data;
+  let min = 255;
+  let max = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    const g = (px[i] * 77 + px[i + 1] * 150 + px[i + 2] * 29) >> 8;
+    px[i] = g;
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  const range = Math.max(1, max - min);
+  for (let i = 0; i < px.length; i += 4) {
+    px[i] = px[i + 1] = px[i + 2] = ((px[i] - min) * 255) / range;
+  }
+  ctx.putImageData(image, 0, 0);
+  return out;
+}
+
+// Returns only the words the reader is confident about, so noise is never searched.
 async function readCoverText(canvas) {
+  let worker;
   try {
     await loadScript(TESSERACT_URL);
-    const { data } = await Tesseract.recognize(canvas, 'eng');
-    const words = (data.text || '')
-      .split(/\s+/)
-      .map((w) => w.replace(/[^\p{L}\p{N}'&-]/gu, ''))
-      .filter((w) => w.length > 1);
-    return words.slice(0, 8).join(' ');
+    worker = await Tesseract.createWorker('eng');
+    await worker.setParameters({ tessedit_pageseg_mode: '11' });
   } catch {
     throw new Error('Could not load the text reader. Type the album below instead.');
   }
+  const words = [];
+  try {
+    for (const image of [canvas, highContrast(canvas)]) {
+      const { data } = await worker.recognize(image);
+      for (const w of data.words || []) {
+        const text = w.text.replace(/[^\p{L}\p{N}'&-]/gu, '');
+        const known = words.some((x) => x.toLowerCase() === text.toLowerCase());
+        if (w.confidence > 60 && /\p{L}{2,}/u.test(text) && !known) words.push(text);
+      }
+    }
+  } finally {
+    worker.terminate();
+  }
+  return words.slice(0, 6).join(' ');
 }
 
 /* ---------- search and results ---------- */
@@ -290,22 +327,41 @@ function appleSearchUrl(query) {
   return `https://music.apple.com/${country().toLowerCase()}/search?term=${encodeURIComponent(query)}`;
 }
 
-async function runSearch(query, source) {
+async function searchAlbums(query) {
+  try {
+    const url = 'https://itunes.apple.com/search?media=music&entity=album&limit=6'
+      + `&country=${country()}&term=${encodeURIComponent(query)}`;
+    return (await jsonp(url)).results || [];
+  } catch {
+    return []; // shown as "no match", with search links
+  }
+}
+
+// `rough` marks text read off a cover: trailing words are often stray, so drop them until something matches.
+async function runSearch(query, source, rough = false) {
   const run = ++searchRun;
   els.query.value = query;
   setStatus(`${source ? source + ': ' : ''}searching for “${query}”…`);
 
-  let albums = [];
-  try {
-    const url = 'https://itunes.apple.com/search?media=music&entity=album&limit=6'
-      + `&country=${country()}&term=${encodeURIComponent(query)}`;
-    albums = (await jsonp(url)).results || [];
-  } catch { /* shown as "no match" below, with search links */ }
+  let albums = await searchAlbums(query);
+  if (rough) {
+    const words = query.split(' ');
+    while (!albums.length && words.length > 2 && run === searchRun) {
+      words.pop();
+      albums = await searchAlbums(words.join(' '));
+      if (albums.length) {
+        query = words.join(' ');
+        els.query.value = query;
+      }
+    }
+  }
   if (run !== searchRun) return;
 
   els.results.replaceChildren();
   if (!albums.length) {
-    setStatus(`No exact match for “${query}”. Edit the text and search again, or open a search:`, true);
+    setStatus(rough
+      ? `Read “${query}” off the cover but found no match. Fix the text below, or add a Claude API key in Settings to recognise covers.`
+      : `No match for “${query}”. Edit the text and search again, or open a search:`, true);
     const links = document.createElement('div');
     links.className = 'links';
     links.append(
@@ -380,6 +436,7 @@ function showKeyState() {
   els.keyState.textContent = key
     ? `Key saved (ends …${key.slice(-4)}). Cover recognition is on.`
     : 'No key saved. Using barcode and cover text only.';
+  els.keyHint.hidden = Boolean(key);
   els.apiKey.value = '';
   els.apiKey.placeholder = key ? 'Paste a new key to replace, or leave empty and Save to remove' : 'sk-ant-…';
 }
@@ -409,5 +466,9 @@ els.saveKey.addEventListener('click', () => {
 });
 
 if (!navigator.mediaDevices?.getUserMedia) els.cameraBtn.hidden = true;
+els.keyHint.querySelector('button').addEventListener('click', () => {
+  els.settings.open = true;
+  els.apiKey.focus();
+});
 initCountry();
 showKeyState();
