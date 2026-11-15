@@ -14,7 +14,7 @@ The match is then searched in Apple's catalogue, and the exact Spotify album lin
 
 ## Hosting
 
-Repository **Settings → Pages → Deploy from a branch**, pick the branch and `/ (root)`.
+Every push runs `.github/workflows/pages.yml`, which publishes the site to GitHub Pages. If the first run fails at "Configure Pages", set **Settings → Pages → Source** to **GitHub Actions** once and re-run it.
 
 ## Running locally
 

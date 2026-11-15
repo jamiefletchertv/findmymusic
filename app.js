@@ -1,6 +1,6 @@
 'use strict';
 
-const CLAUDE_MODEL = 'claude-opus-5-5';
+const CLAUDE_MODEL = 'claude-haiku-5-5';
 const MAX_IMAGE_SIDE = 1568;
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
@@ -228,13 +228,11 @@ async function askClaude(base64, key) {
         'content-type': 'application/json',
         'x-api-key': key,
         'anthropic-version': '2026-10-21',
-        'anthropic-beta': 'server-side-fallback-2026-07-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 2000,
-        fallbacks: 'default',
         output_config: { effort: 'low' },
         messages: [{
           role: 'user',
