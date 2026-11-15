@@ -1,0 +1,169 @@
+:root {
+  --bg: #14110f;
+  --panel: #1f1b18;
+  --line: #3a332d;
+  --text: #f3ece3;
+  --muted: #a39887;
+  --accent: #e8a33d;
+  --spotify: #1ed760;
+  --apple: #fa586a;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 ui-rounded, "Avenir Next", "Segoe UI", system-ui, sans-serif;
+}
+
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: max(20px, env(safe-area-inset-top)) 16px 48px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.02em; }
+.tagline { margin: 2px 0 0; color: var(--muted); font-size: 0.95rem; }
+
+.disc {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, var(--bg) 0 4%, var(--accent) 5% 30%, transparent 31%),
+    repeating-radial-gradient(circle, #0b0a09 0 2px, #2a2521 2px 3px);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.busy .disc { animation: spin 1.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy .disc { animation: none; } }
+
+.stage {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+.stage video, .stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.stage-hint {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+button, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #1b1408; }
+button:disabled { opacity: 0.5; cursor: default; }
+button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.status { min-height: 1.5em; margin: 12px 0 0; color: var(--muted); }
+.status.error { color: #ff9c8a; }
+
+.search { margin-top: 20px; }
+label { display: block; margin-bottom: 6px; font-size: 0.9rem; color: var(--muted); }
+.search-row { display: flex; gap: 8px; }
+.search-row input { flex: 1; min-width: 0; }
+
+input, select {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+select { width: 100%; }
+
+.results { margin-top: 24px; display: grid; gap: 12px; }
+.results h2 { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 600; }
+
+.album {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 14px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.album:first-of-type { grid-template-columns: 128px 1fr; border-color: var(--accent); }
+.album img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #0b0a09;
+}
+.album h3 { margin: 0; font-size: 1.05rem; line-height: 1.25; overflow-wrap: anywhere; }
+.album p { margin: 2px 0 10px; color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+.links { display: flex; flex-wrap: wrap; gap: 8px; }
+.links a {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.9rem;
+  border-color: transparent;
+  color: #0b0a09;
+}
+.links .spotify { background: var(--spotify); }
+.links .apple { background: var(--apple); }
+
+.settings {
+  margin-top: 32px;
+  padding: 4px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.settings summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
+.field { margin-bottom: 18px; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+p.muted { margin: 8px 0 0; }
+a { color: var(--accent); }
+
+[hidden] { display: none !important; }
